@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pet-clinic-deployment
+spec:
+  replicas: 2  # Adjust the number of replicas as needed
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: pet-clinic
+  template:
+    metadata:
+      labels:
+        app: pet-clinic
+    spec:
+      containers:
+      - name: pet-clinic-container
+        image: harikrishnan586/pet-clinic123:latest
+        ports:
+        - containerPort: 8080  # Adjust the port if your application uses a different one
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pet-clinic-service
+spec:
+  selector:
+    app: pet-clinic
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080  # Assuming your application listens on port 8080
+  type: NodePort  # Use NodePort to expose the service via a high port on each node
