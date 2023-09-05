@@ -1,0 +1,104 @@
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk11'
+        maven 'maven3'
+    }
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage('Checkout SCM') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/master']],
+                    userRemoteConfigs: [[url: 'https://github.com/Skrishnan586/amazon-eks-jenkins-terraform-aj7.git']]
+                ])
+            }
+        }
+        stage('Maven Compile') {
+            steps {
+                sh 'mvn clean compile'
+            }
+        }
+        stage('Test Cases') {
+            steps {
+                sh 'mvn test'
+            }
+        }
+        stage('Sonarqube Analysis') {
+            steps {
+                script {
+                    withSonarQubeEnv(credentialsId: 'Sonar-token') {
+                        sh 'mvn sonar:sonar'
+                    }
+                }
+            }
+        }
+        stage("Quality Gate") {
+            steps {
+                sleep(35)
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true, credentialsId: 'Sonar-token'
+                }
+            }
+            post {
+                failure {
+                    echo 'Sending email notification from Jenkins'
+                    step([$class: 'Mailer',
+                        notifyEveryUnstableBuild: true,
+                        recipients: emailextrecipients([
+                            [$class: 'CulpritsRecipientProvider'],
+                            [$class: 'RequesterRecipientProvider']
+                        ])
+                    ])
+                }
+            }
+        }
+        stage('OWASP Dependency Check') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --format HTML', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Build War file') {
+            steps {
+                sh 'mvn clean install package'
+            }
+        }
+        stage('Build and Push to Docker Hub') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh 'docker build -t petclinic1 .'
+                        sh 'docker tag petclinic1 harikrishnan586/pet-clinic123:latest'
+                        sh 'docker push harikrishnan586/pet-clinic123:latest'
+                    }
+                }
+            }
+        }
+        stage(TRIVY) {
+            steps {
+                sh "trivy image harikrishnan586/pet-clinic123:latest"
+            }
+        }
+        stage('Approval - Deploy on k8s') {
+            steps {
+                input 'Approve for Deploy in K8S'
+            }
+        }
+        stage('Deploy on k8s') {
+            steps {
+                script {
+                    withKubeCredentials(kubectlCredentials: [[credentialsId: 'k8s', namespace: 'ms']]) {
+                        sh 'kubectl get ns'
+                        sh 'kubectl apply -f /var/lib/jenkins/pet-clinic-deployment-service.yaml'
+                    }
+                }
+            }
+        }
+    }
+}
