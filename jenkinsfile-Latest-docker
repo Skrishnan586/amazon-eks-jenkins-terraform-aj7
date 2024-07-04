@@ -1,0 +1,99 @@
+pipeline {
+    agent any
+    
+    tools {
+        jdk 'jdk11'
+        maven 'maven3'
+    }
+    
+    stages {
+        stage("Clean workspace") {
+            steps {
+                cleanWs()
+            }
+        }
+        
+        stage("Git Checkout") {
+            steps {
+                git url: 'https://github.com/Skrishnan586/amazon-eks-jenkins-terraform-aj7.git'
+            }
+        }
+        
+        stage("Compile the code with Maven") {
+            steps {
+                sh "mvn clean compile"
+            }
+        }
+        
+        stage("SonarQube static code analysis") {
+            steps {
+                script {
+                    withSonarQubeEnv(credentialsId: 'Sonar-token') {
+                        sh 'mvn sonar:sonar'
+                    }
+                }
+            }
+        }
+        
+        stage("Sonar quality gate") {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                }
+            }
+        }
+        
+        stage("Build war file") {
+            steps {
+                sh 'mvn clean install package'
+            }
+        }
+        
+        stage("Docker image build and push to Docker Hub") {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh 'docker build -t pet-care-app1.0 .'
+                        sh 'docker tag pet-care-app1.0 harikrishnan586/pet-care-app1.0:latest'
+                        sh 'docker push harikrishnan586/pet-care-app1.0:latest'
+                    }
+                }
+            }
+        }
+        
+        stage("Manual Approval") {
+            steps {
+                input message: "Deploy to Docker container?", ok: 'Deploy', submitter: 'approver'
+            }
+        }
+        
+        stage("Deploy to Docker container") {
+            steps {
+                sh 'docker run -d --name pet1 -p 8082:8080 harikrishnan586/pet-care-app1.0:latest'
+            }
+        }
+        
+        stage("Post-Build Cleanup") {
+            when {
+                expression { currentBuild.result == 'SUCCESS' }
+            }
+            steps {
+                script {
+                    echo "Cleaning Docker resources..."
+                    sh 'docker system prune -af'
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Pipeline succeeded!"
+            cleanWs() // Clean workspace on success
+        }
+        failure {
+            echo "Pipeline failed!"
+            cleanWs() // Clean workspace on failure
+        }
+    }
+}
